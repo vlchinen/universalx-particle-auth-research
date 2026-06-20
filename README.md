@@ -32,7 +32,7 @@ Analysis of the login process used by UniversalX, including:
 
 Documentation:
 
-* `authentication-flow.md`
+* `01-authentication-flow.md`
 
 ---
 
@@ -49,7 +49,7 @@ Topics include:
 
 Documentation:
 
-* `smart-account-analysis.md`
+* `02-smart-account-analysis.md`
 
 ---
 
@@ -67,7 +67,7 @@ Topics include:
 
 Documentation:
 
-* `api-observations.md`
+* `03-api-observations.md`
 
 ---
 
@@ -131,9 +131,9 @@ Authorization Layer
 ```text
 .
 ├── README.md
-├── authentication-flow.md
-├── smart-account-analysis.md
-├── api-observations.md
+├── 01-authentication-flow.md
+├── 02-smart-account-analysis.md
+├── 03-api-observations.md
 ├── universalx-auth.js
 └── universalx-trading-flow.js
 ```
