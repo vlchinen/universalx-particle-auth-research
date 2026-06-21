@@ -164,7 +164,6 @@ async function getSmartAddress(mainaddress, proxy) {
   }
 }
 
-// Hàm đăng nhập để lấy macKey mới và bearer token
 async function login(deviceId, privateKey, proxy) {
   
   const wallet = new ethers.Wallet(privateKey);
@@ -260,8 +259,8 @@ ${deviceId}`;
 
 async function createtrade(deviceId, wallet, macKey, bearerToken, nameassest, amount, proxy) {
   const httpsAgent = getProxyAgent(proxy);
-  const timestampSeconds = getTimestampSeconds(); // Giây cho queryParams
-  const nonce = getMicrosecondTimestampFromEpoch(); // Mili-giây cho payload
+  const timestampSeconds = getTimestampSeconds(); 
+  const nonce = getMicrosecondTimestampFromEpoch(); 
   const randomStr = uuidv4();
 
   const queryParams = {
@@ -330,7 +329,7 @@ async function createtrade(deviceId, wallet, macKey, bearerToken, nameassest, am
   };
 
   try {
-    const response = await axios.post(url, payload, { headers, httpsAgent }); // Hoặc POST tùy API
+    const response = await axios.post(url, payload, { headers, httpsAgent }); 
     console.log(response.data);
     const userOps = response.data.result.feeQuotes[0].userOps;
     const userOpHashes = userOps.map(op => op.userOpHash);
@@ -373,7 +372,7 @@ async function buildAuthorizationPayload() {
 async function getassest(deviceId, loginResult, proxy) {
   const httpsAgent = getProxyAgent(proxy);
   const { macKey, token} = loginResult;
-  const timestampSeconds = getTimestampSeconds(); // Giây cho queryParams
+  const timestampSeconds = getTimestampSeconds(); 
   const randomStr = uuidv4();
 
   const queryParams = {
@@ -417,8 +416,7 @@ async function getassest(deviceId, loginResult, proxy) {
   };
 
   try {
-    const response = await axios.get(url, { headers, httpsAgent }); // Hoặc POST tùy API
-    // Giả sử `data` là kết quả trả về từ API
+    const response = await axios.get(url, { headers, httpsAgent });
     return response.data.tokens
     .filter(token => {
       const symbol = token.token?.symbol?.toUpperCase();
@@ -440,8 +438,8 @@ async function getassest(deviceId, loginResult, proxy) {
 async function gettradevolume(deviceId, loginResult, proxy) {
   const httpsAgent = getProxyAgent(proxy);
   const {aaAddress, solanaAAAddress, macKey, token} = loginResult;
-  const timestampSeconds = getTimestampSeconds(); // Giây cho queryParams
-  const nonce = getMicrosecondTimestampFromEpoch(); // Mili-giây cho payload
+  const timestampSeconds = getTimestampSeconds(); 
+  const nonce = getMicrosecondTimestampFromEpoch(); 
   const randomStr = uuidv4();
 
   const queryParams = {
@@ -501,7 +499,7 @@ async function gettradevolume(deviceId, loginResult, proxy) {
   };
 
   try {
-    const response = await axios.post(url, payload, { headers, httpsAgent }); // Hoặc POST tùy API
+    const response = await axios.post(url, payload, { headers, httpsAgent });
     const transactions = response.data.result.data;
         const filteredTxs = transactions.filter(tx => {
           const tag = tx.tag?.toLowerCase();
@@ -511,7 +509,7 @@ async function gettradevolume(deviceId, loginResult, proxy) {
         // Tính tổng trade volume (bỏ dấu âm/dương)
         const totalVolume = filteredTxs.reduce((sum, tx) => {
           const amountStr = tx.change?.amountInUSD || '0';
-          const cleaned = amountStr.replace('+', '').replace('-', ''); // bỏ dấu
+          const cleaned = amountStr.replace('+', '').replace('-', ''); 
           const amount = parseFloat(cleaned);
           return sum + (isNaN(amount) ? 0 : amount);
         }, 0);
@@ -538,11 +536,10 @@ async function waitForUsdcOnly(deviceId, loginResult, proxy) {
     if (usdtAmount === 0n && usdcAmount > 0n) {
       return {
         symbol: 'usdc',
-        amount: usdc.amount, // giữ nguyên dạng hex
+        amount: usdc.amount, 
       };
     }
 
-    // Nếu chưa đạt điều kiện thì đợi 5 giây rồi thử lại
     await new Promise(resolve => setTimeout(resolve, 10000));
   }
 }
@@ -553,8 +550,8 @@ async function createwithdraw(deviceId, wallet, result, loginResult, proxy) {
   const {symbol, amount} = result;
   const {macKey, token} = loginResult;
  
-  const timestampSeconds = getTimestampSeconds(); // Giây cho queryParams
-  const nonce = getMicrosecondTimestampFromEpoch(); // Mili-giây cho payload
+  const timestampSeconds = getTimestampSeconds(); 
+  const nonce = getMicrosecondTimestampFromEpoch(); 
   const randomStr = uuidv4();
 
   const queryParams = {
@@ -619,7 +616,7 @@ async function createwithdraw(deviceId, wallet, result, loginResult, proxy) {
   };
 
   try {
-    const response = await axios.post(url, payload, { headers, httpsAgent }); // Hoặc POST tùy API
+    const response = await axios.post(url, payload, { headers, httpsAgent });
     console.log(response.data);
     const userOps = response.data.result.feeQuotes[0].userOps;
     const userOpHashes = userOps.map(op => op.userOpHash);
@@ -645,10 +642,8 @@ async function autoTradeUntilVolumeReached(deviceId, wallet, loginResult, proxy)
       break;
     }
 
-    // Lấy thông tin assest
     const assest = await getassest(deviceId, loginResult, proxy);
 
-    // Tìm tài sản có amount lớn nhất
     let maxAsset = null;
     let maxAmount = BigInt(0);
 
@@ -674,13 +669,13 @@ async function autoTradeUntilVolumeReached(deviceId, wallet, loginResult, proxy)
         console.log('❌ Lỗi khi tạo hoặc gửi giao dịch:', error.message || error);
         console.log('⏳ Đợi 10 giây rồi thử lại với assest mới...');
         await new Promise(resolve => setTimeout(resolve, 10000));
-        continue; // quay lại từ đầu vòng lặp
+        continue; 
       }
     } else {
       console.log('⚠️ Không có tài sản nào hợp lệ, đợi 10 giây...');
     }
 
-    await new Promise(resolve => setTimeout(resolve, 15000)); // Đợi 10 giây
+    await new Promise(resolve => setTimeout(resolve, 15000));
   }
 }
 
