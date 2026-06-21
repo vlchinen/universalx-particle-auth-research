@@ -61,7 +61,7 @@ const getbalance = async (batchSize) => {
       console.log(`💰 Balance: ${formattedBalance} - Required: ${requiredAmount}`);
 
       if (formattedBalance >= requiredAmount) {
-        console.log("✅ Đủ balance, tiếp tục...");
+        console.log("✅ enough balance, countinue...");
         return formattedBalance;
       } else {
         console.log("⏳ Không đủ balance USDC, đợi 20s rồi kiểm tra lại...");
