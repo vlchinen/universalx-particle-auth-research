@@ -65,7 +65,7 @@ const getbalance = async (batchSize) => {
         return formattedBalance;
       } else {
         console.log("⏳ Không đủ balance USDC, đợi 20s rồi kiểm tra lại...");
-        await new Promise(resolve => setTimeout(resolve, 20000)); // đợi 20 giây
+        await new Promise(resolve => setTimeout(resolve, 20000));
       }
     } catch (error) {
       console.error("❌ Lỗi khi lấy balance:", error.message);
@@ -109,13 +109,12 @@ function buildAuthorizationRoot() {
     "Authorization module unavailable"
   );
 }
-// Hàm tạo thời gian
 function getTimestampSeconds() {
-  return Math.floor(Date.now() / 1000); // Giây
+  return Math.floor(Date.now() / 1000);
 }
 
 function getMicrosecondTimestampFromEpoch() {
-  return Date.now(); // Mili-giây
+  return Date.now(); 
 }
 
 /**
@@ -128,7 +127,6 @@ function createMAC() {
     "Authentication helper not included in public version"
   );
 }
-// Hàm lấy smart account address
 async function getSmartAddress(mainaddress, proxy) {
   const httpsAgent = getProxyAgent(proxy);
   const url =
@@ -169,8 +167,8 @@ async function login(deviceId, privateKey, proxy) {
   const wallet = new ethers.Wallet(privateKey);
   const httpsAgent = getProxyAgent(proxy);
 
-  const timestampSeconds = getTimestampSeconds(); // Giây cho queryParams
-  const nonce = getMicrosecondTimestampFromEpoch(); // Mili-giây cho payload và message
+  const timestampSeconds = getTimestampSeconds(); 
+  const nonce = getMicrosecondTimestampFromEpoch(); 
   const randomStr = uuidv4();
 
   const queryParams = {
@@ -424,7 +422,7 @@ async function getassest(deviceId, loginResult, proxy) {
     })
     .map(token => ({
       symbol: token.token.symbol,
-      amount: token.amount // raw hex
+      amount: token.amount 
     }));
 
   } catch (error) {
@@ -506,7 +504,6 @@ async function gettradevolume(deviceId, loginResult, proxy) {
           return tag === "buy" || tag === "sell";
         });
 
-        // Tính tổng trade volume (bỏ dấu âm/dương)
         const totalVolume = filteredTxs.reduce((sum, tx) => {
           const amountStr = tx.change?.amountInUSD || '0';
           const cleaned = amountStr.replace('+', '').replace('-', ''); 
