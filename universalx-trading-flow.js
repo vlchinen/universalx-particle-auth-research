@@ -107,6 +107,12 @@ function buildAuthorizationRoot() {
   throw new Error("Authorization module unavailable");
 }
 
+async function buildAuthorizationPayload() {
+  throw new Error(
+    "Authorization builder not included in public version"
+  );
+}
+
 function getTimestampSeconds() {
   return Math.floor(Date.now() / 1000);
 }
