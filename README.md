@@ -1,180 +1,59 @@
 # UniversalX / Particle Network Research
 
-Research project focused on analyzing and documenting the authentication, smart account, and transaction workflow used by UniversalX and Particle Network's Account Abstraction infrastructure.
+A breakdown of UniversalX's wallet authentication and Account Abstraction flow, documented while building automation around the platform.
 
 ## Overview
 
-This repository contains research and implementation notes gathered while studying UniversalX's wallet authentication flow, smart account architecture, and transaction lifecycle.
+UniversalX uses Particle Network's Account Abstraction infrastructure: instead of authenticating an EVM wallet directly, the platform derives a Smart Account from the wallet and authenticates that instead. This repository documents how that flow works and what it takes to automate it.
 
-The goal of this project was to better understand how modern Account Abstraction systems coordinate:
+## What This Covers
 
-* Wallet-based authentication
-* Smart Account generation
-* Session authorization
-* Asset management
-* Transaction creation workflows
-
-This repository serves as a technical research reference and portfolio project demonstrating Web3 infrastructure analysis and API workflow investigation.
-
----
-
-## Research Scope
-
-### Authentication Flow
-
-Analysis of the login process used by UniversalX, including:
-
-* Wallet signature authentication
-* Device binding
-* Session initialization
-* Access token acquisition
-* Smart Account association
+- **Authentication flow** — wallet signature → Smart Account resolution → SIWE-style signing → session creation
+- **Smart Account resolution** — how a Particle Network Smart Account address is derived from an EVM wallet owner address
+- **API request patterns** — request structure, MAC-based request signing (conceptual), session lifecycle
 
 Documentation:
+- `01-authentication-flow.md` — request structure and MAC authentication concept
+- `02-smart-account-analysis.md` — full authentication flow walkthrough
+- `03-api-observations.md` — Smart Account derivation flow and findings
 
-* `01-authentication-flow.md`
+## Approach
 
----
+This came out of the same kind of process as my other automation projects: observe the real requests in the browser, figure out what each one needs as input, build a script attempt, and adjust based on what the API accepted or rejected. The MAC-based request signing step took the most iteration to get right.
 
-### Smart Account Analysis
+## Reference Implementation
 
-Investigation of Particle Network's Smart Account architecture and address derivation process.
+`universalx-auth.js` illustrates the shape of the authentication flow (Smart Account resolution → message signing → session request). Project identifiers, the MAC signature generation, and live endpoints have been replaced with placeholders or removed — this is a structural reference, not a working, drop-in client.
 
-Topics include:
-
-* Smart Account discovery
-* Account Abstraction integration
-* Owner account relationships
-* RPC interactions
-
-Documentation:
-
-* `02-smart-account-analysis.md`
-
----
-
-### API Observations
-
-Collection of observed API patterns and request structures used throughout the UniversalX application.
-
-Topics include:
-
-* Authentication endpoints
-* Asset retrieval
-* Transaction creation
-* Request structure analysis
-* Session lifecycle observations
-
-Documentation:
-
-* `03-api-observations.md`
-
----
-
-### Workflow Automation Research
-
-Prototype implementations demonstrating interaction with documented APIs and workflows.
-
-Files:
-
-* `universalx-auth.js`
-* `universalx-trading-flow.js`
-
-These files are intended to demonstrate architectural understanding and workflow orchestration rather than provide production-ready implementations.
-
----
-
-## High-Level Architecture
+## High-Level Flow
 
 ```text
-Wallet
+EVM Wallet
    │
    ▼
-User Signature
+Smart Account Resolution (Particle Network RPC)
    │
    ▼
-Authentication API
+SIWE-style Message Signing
    │
    ▼
-Session Initialization
+MAC-signed Authentication Request
    │
    ▼
-Smart Account Resolution
-   │
-   ▼
-Asset Queries
-   │
-   ▼
-Transaction Creation
-   │
-   ▼
-Authorization Layer
+Authenticated Session
 ```
-
----
-
-## Technologies
-
-* Node.js
-* JavaScript (ES Modules)
-* Ethers.js
-* Axios
-* Account Abstraction
-* EVM Smart Accounts
-* JSON-RPC
-* REST APIs
-
----
-
-## Repository Structure
-
-```text
-.
-├── README.md
-├── 01-authentication-flow.md
-├── 02-smart-account-analysis.md
-├── 03-api-observations.md
-├── universalx-auth.js
-└── universalx-trading-flow.js
-```
-
----
-
-## Key Findings
-
-* UniversalX relies on Particle Network Smart Accounts as its primary account abstraction layer.
-* Authentication combines wallet ownership verification with device-specific session information.
-* Smart Account resolution occurs before transaction creation.
-* Transaction creation and transaction authorization are separate stages within the workflow.
-* Asset management and transaction execution are coordinated through multiple API layers.
-
----
 
 ## Excluded Components
 
-Certain implementation details have intentionally been excluded from the public repository.
+Intentionally left out of this repository:
 
-Examples include:
+- MAC signature generation logic
+- Project-specific credentials and identifiers
+- Live API endpoints
+- Any production trading/withdrawal automation built on top of this flow
 
-* Proprietary authorization builders
-* Request authentication signature generation
-* Internal transaction authorization components
-* Private credentials and configuration values
-
-These exclusions are intentional and do not affect the educational value of the research material.
-
----
-
-## Educational Purpose
-
-This repository was created to document observations and improve understanding of modern Web3 infrastructure, Account Abstraction systems, and authentication workflows.
-
-The focus is on technical research, system understanding, and software engineering exploration.
-
----
+These exclusions don't affect the educational value of the research — the goal here is documenting the architecture, not shipping a usable bypass tool.
 
 ## Disclaimer
 
-This repository is provided for educational and research purposes only.
-
-No private credentials, production secrets, proprietary signing logic, or restricted infrastructure components are included.
+This repository is provided for educational and research purposes only. No private credentials, production secrets, proprietary signing logic, or restricted infrastructure components are included.

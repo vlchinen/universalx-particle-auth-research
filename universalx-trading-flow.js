@@ -1,54 +1,98 @@
 import axios from 'axios';
 import { ethers } from 'ethers';
 import { v4 as uuidv4 } from 'uuid';
-import { createHash } from 'crypto';
-import { arrayify } from "@ethersproject/bytes";
-import { keccak256, concat, toBeHex, getBytes } from "ethers";
-import { HttpsProxyAgent } from 'https-proxy-agent'; 
-import fs from 'fs';
+import { HttpsProxyAgent } from 'https-proxy-agent';
+import dotenv from 'dotenv';
 
-const initialMacKey = '';
-const provider = new ethers.JsonRpcProvider("");
-const privateKeysender = "";
-const walletsender = new ethers.Wallet(privateKeysender, provider);
+dotenv.config();
+
+/**
+ * UniversalX (Particle Network) — Full Automation Flow
+ *
+ * End-to-end automation pipeline: login → check assets → auto-trade until
+ * a volume target is reached → withdraw remaining balance → multi-send
+ * deposits to multiple wallets via a custom multi-send contract.
+ *
+ * Project identifiers, the MAC signature generator, the authorization
+ * payload builder, and live API credentials have been removed/replaced
+ * with placeholders — this illustrates the workflow shape, not a working,
+ * drop-in client.
+ *
+ * Purpose: Educational portfolio project showcasing Web3 automation patterns
+ * (multi-step API orchestration, retry logic, on-chain batch transfers).
+ */
+
+const PARTICLE_RPC_BASE = process.env.PARTICLE_RPC_URL || 'https://rpc.particle.network/evm-chain';
+const UNIVERSALX_API_BASE = process.env.UNIVERSALX_API_URL || 'https://universal-app-api.example.com';
+const UNIVERSALX_RPC_BASE = process.env.UNIVERSALX_RPC_URL || 'https://universal-rpc.example.com';
+
+const PROJECT_CONFIG = {
+  uuid: process.env.PROJECT_UUID || '<project-uuid>',
+  clientKey: process.env.PROJECT_CLIENT_KEY || '<project-client-key>',
+  appUuid: process.env.PROJECT_APP_UUID || '<project-app-uuid>',
+};
+
+// Server-side API credential — never hardcode this. Loaded from env only.
+const API_BASIC_AUTH = process.env.UNIVERSALX_BASIC_AUTH || '<basic-auth-not-set>';
+
+const provider = new ethers.JsonRpcProvider(process.env.RPC_URL || '');
+const walletsender = new ethers.Wallet(process.env.SENDER_PRIVATE_KEY || ethers.Wallet.createRandom().privateKey, provider);
 const walletsenderaddress = walletsender.address;
-const multiSendContractAddress = ""; 
+const multiSendContractAddress = process.env.MULTISEND_CONTRACT_ADDRESS || '<multisend-contract-address>';
+const usdcContractAddress = process.env.USDC_CONTRACT_ADDRESS || '<usdc-contract-address>';
 
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
+function getProxyAgent(proxy) {
+  const { host, port, auth } = proxy;
+  const proxyUrl = `http://${auth.username}:${auth.password}@${host}:${port}`;
+  return new HttpsProxyAgent(proxyUrl);
+}
+
+function getCommonHeaders(extra = {}) {
+  return {
+    Accept: 'application/json, text/plain, */*',
+    'Content-Type': 'application/json',
+    Origin: 'https://universalx.app',
+    Referer: 'https://universalx.app/',
+    ...extra,
+  };
+}
+
 const multiSendContractABI = [
-    {
-        inputs: [
-            { internalType: 'address payable[]', name: 'recipients', type: 'address[]' },
-            { internalType: 'uint256[]', name: 'amounts', type: 'uint256[]' },
-        ],
-        name: 'transferMulti',
-        outputs: [],
-        stateMutability: 'payable',
-        type: 'function',
-    },
-    {
-        inputs: [
-            { internalType: 'address payable', name: 'tokenAddress', type: 'address' },
-            { internalType: 'address payable[]', name: 'recipients', type: 'address[]' },
-            { internalType: 'uint256[]', name: 'amounts', type: 'uint256[]' },
-        ],
-        name: 'transferMultiToken',
-        outputs: [],
-        stateMutability: 'payable',
-        type: 'function',
-    },
+  {
+    inputs: [
+      { internalType: 'address payable[]', name: 'recipients', type: 'address[]' },
+      { internalType: 'uint256[]', name: 'amounts', type: 'uint256[]' },
+    ],
+    name: 'transferMulti',
+    outputs: [],
+    stateMutability: 'payable',
+    type: 'function',
+  },
+  {
+    inputs: [
+      { internalType: 'address payable', name: 'tokenAddress', type: 'address' },
+      { internalType: 'address payable[]', name: 'recipients', type: 'address[]' },
+      { internalType: 'uint256[]', name: 'amounts', type: 'uint256[]' },
+    ],
+    name: 'transferMultiToken',
+    outputs: [],
+    stateMutability: 'payable',
+    type: 'function',
+  },
 ];
 
+/**
+ * Wait until the sender wallet holds enough USDC to fund a batch deposit.
+ */
 const getbalance = async (batchSize) => {
-  const contractaddress = '';
   const abiERC20 = [
-    "function balanceOf(address owner) view returns (uint256)",
-    "function decimals() view returns (uint8)",
+    'function balanceOf(address owner) view returns (uint256)',
+    'function decimals() view returns (uint8)',
   ];
 
-  const balancecontract = new ethers.Contract(contractaddress, abiERC20, provider);
-
+  const balancecontract = new ethers.Contract(usdcContractAddress, abiERC20, provider);
   const decimals = await balancecontract.decimals();
   const requiredAmount = batchSize * 5.5;
 
@@ -60,57 +104,37 @@ const getbalance = async (batchSize) => {
       console.log(`💰 Balance: ${formattedBalance} - Required: ${requiredAmount}`);
 
       if (formattedBalance >= requiredAmount) {
-        console.log("✅ Enough balance, continuing...");
+        console.log('✅ Enough balance, continuing...');
         return formattedBalance;
       } else {
-        console.log("⏳ Insufficient USDC balance, waiting 20s before checking again...");
-        await new Promise(resolve => setTimeout(resolve, 20000));
+        console.log('⏳ Insufficient USDC balance, waiting 20s before checking again...');
+        await delay(20000);
       }
     } catch (error) {
-      console.error("❌ Error fetching balance:", error.message);
+      console.error('❌ Error fetching balance:', error.message);
       return null;
     }
   }
 };
 
+/**
+ * Batch-deposit USDC to multiple recipient wallets via a multi-send contract.
+ */
 async function sendToken(recipients) {
-  const multiSendContract = new ethers.Contract(
-      multiSendContractAddress,
-      multiSendContractABI,
-      walletsender
-  );
+  const multiSendContract = new ethers.Contract(multiSendContractAddress, multiSendContractABI, walletsender);
   const amount = ethers.parseUnits('5.5', 6);
-  const tokenAddress = '';
   const amounts = recipients.map(() => amount);
-  const gasLimit = 40000 * recipients.length > 500000 ? 40000 * recipients.length : 500000;
-  const gasPriceHex = await provider.send("eth_gasPrice", []);
-
+  const gasLimit = Math.max(40000 * recipients.length, 500000);
+  const gasPriceHex = await provider.send('eth_gasPrice', []);
   const gasPrice = BigInt(gasPriceHex);
-  const increasedGasPrice = gasPrice * 12n / 10n;
+  const increasedGasPrice = (gasPrice * 12n) / 10n;
 
-  const tx = await multiSendContract.transferMultiToken(
-      tokenAddress,
-      recipients,
-      amounts,
-      { gasLimit, gasPrice: increasedGasPrice }
-  );
+  const tx = await multiSendContract.transferMultiToken(usdcContractAddress, recipients, amounts, {
+    gasLimit,
+    gasPrice: increasedGasPrice,
+  });
   const receipt = await tx.wait();
-  console.log("Token transfer successful with hash:", receipt.hash);
-}
-
-async function hextodecimal(value) {
-  const balance = BigInt(value);
-  return ethers.formatUnits(balance, 18);
-}
-
-function buildAuthorizationRoot() {
-  throw new Error("Authorization module unavailable");
-}
-
-async function buildAuthorizationPayload() {
-  throw new Error(
-    "Authorization builder not included in public version"
-  );
+  console.log('Token transfer successful with hash:', receipt.hash);
 }
 
 function getTimestampSeconds() {
@@ -118,45 +142,31 @@ function getTimestampSeconds() {
 }
 
 function getMicrosecondTimestampFromEpoch() {
-  return Date.now(); 
+  return Date.now();
 }
 
 /**
- * Request authentication helper.
- * Internal implementation omitted.
+ * Request authentication helper — internal implementation omitted.
+ * See docs/01-authentication-flow.md for the conceptual MAC structure.
  */
 function createMAC() {
-  throw new Error("Authentication helper not included in public version");
+  throw new Error('Authentication helper not included in public version');
 }
 
 async function getSmartAddress(mainaddress, proxy) {
   const httpsAgent = getProxyAgent(proxy);
-  const url = 'https://rpc.particle.network/evm-chain?method=particle_aa_getSmartAccount&chainId=1&projectUuid=47fe67e3-5cf2-4be2-886b-1d4b4290595f&projectKey=cVbve788gN6Wna6IYA4MCU9SjN6wOyfEZtNVnbuu';
-
-  const id = getMicrosecondTimestampFromEpoch();
+  const url = `${PARTICLE_RPC_BASE}?method=particle_aa_getSmartAccount&chainId=1&projectUuid=${PROJECT_CONFIG.uuid}&projectKey=${PROJECT_CONFIG.clientKey}`;
 
   const payload = {
     method: 'particle_aa_getSmartAccount',
-    id: id,
+    id: getMicrosecondTimestampFromEpoch(),
     jsonrpc: '2.0',
-    params: [
-      {
-        name: 'UNIVERSAL',
-        ownerAddress: mainaddress,
-        version: '1.0.3',
-      },
-    ],
-  };
-
-  const headers = {
-    Accept: 'application/json, text/plain, */*',
-    'Content-Type': 'application/json',
+    params: [{ name: 'UNIVERSAL', ownerAddress: mainaddress, version: '1.0.3' }],
   };
 
   try {
-    const response = await axios.post(url, payload, { headers, httpsAgent });
-    const address = response.data.result[0].smartAccountAddress;
-    return address;
+    const response = await axios.post(url, payload, { headers: getCommonHeaders(), httpsAgent });
+    return response.data.result[0].smartAccountAddress;
   } catch (error) {
     console.error('Error fetching Smart Account Address:', error.message);
     return null;
@@ -167,8 +177,8 @@ async function login(deviceId, privateKey, proxy) {
   const wallet = new ethers.Wallet(privateKey);
   const httpsAgent = getProxyAgent(proxy);
 
-  const timestampSeconds = getTimestampSeconds(); 
-  const nonce = getMicrosecondTimestampFromEpoch(); 
+  const timestampSeconds = getTimestampSeconds();
+  const nonce = getMicrosecondTimestampFromEpoch();
   const randomStr = uuidv4();
 
   const queryParams = {
@@ -176,12 +186,11 @@ async function login(deviceId, privateKey, proxy) {
     timestamp: timestampSeconds,
     random_str: randomStr,
     device_id: deviceId,
-    sdk_version: 'web_0.7.33',
     time_zone: 'Asia/Bangkok',
-    locale: 'vi',
-    project_uuid: '47fe67e3-5cf2-4be2-886b-1d4b4290595f',
-    project_client_key: 'cVbve788gN6Wna6IYA4MCU9SjN6wOyfEZtNVnbuu',
-    project_app_uuid: 'dddd3cb1-bf66-460b-91c2-7adb0373e21c',
+    locale: 'en',
+    project_uuid: PROJECT_CONFIG.uuid,
+    project_client_key: PROJECT_CONFIG.clientKey,
+    project_app_uuid: PROJECT_CONFIG.appUuid,
   };
 
   const smartAddress = await getSmartAddress(wallet.address, proxy);
@@ -208,57 +217,36 @@ ${deviceId}`;
 
   const payload = {
     loginType: 'evm',
-    signature: signature,
-    smartAccountOptions: {
-      name: 'UNIVERSAL',
-      ownerAddress: wallet.address,
-      version: '1.0.3',
-    },
+    signature,
+    smartAccountOptions: { name: 'UNIVERSAL', ownerAddress: wallet.address, version: '1.0.3' },
     timestamp: nonce,
   };
 
-  queryParams.mac = createMAC(queryParams, payload, initialMacKey);
+  // MAC generation intentionally not implemented — see disclaimer above.
+  queryParams.mac = createMAC(queryParams, payload, '<mac-key>');
 
   const queryString = new URLSearchParams(queryParams).toString();
-  const url = `https://universal-app-api.particle.network/users?${queryString}`;
+  const url = `${UNIVERSALX_API_BASE}/users?${queryString}`;
 
-  const headers = {
-    Accept: 'application/json, text/plain, */*',
-    'Content-Type': 'application/json',
+  const headers = getCommonHeaders({
     'Auth-Type': 'Basic',
-    Authorization: 'Basic b3pzRm5YYjdxS2ZQU0xxTERNNW06M29BSDVoUE1YcmRBckxjc0FCeHg=',
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36',
-    Origin: 'https://universalx.app',
-    Referer: 'https://universalx.app/',
-    'Accept-Encoding': 'gzip, deflate, br, zstd',
-    'Accept-Language': 'en-US,en;q=0.9,vi;q=0.8',
-    'Cache-Control': 'no-cache',
-    Pragma: 'no-cache',
-    Priority: 'u=1, i',
-    'Sec-Ch-Ua': '"Google Chrome";v="135", "Not-A.Brand";v="8", "Chromium";v="135"',
-    'Sec-Ch-Ua-Mobile': '?0',
-    'Sec-Ch-Ua-Platform': '"Windows"',
-    'Sec-Fetch-Dest': 'empty',
-    'Sec-Fetch-Mode': 'cors',
-    'Sec-Fetch-Site': 'cross-site',
-  };
+    Authorization: `Basic ${API_BASIC_AUTH}`,
+  });
 
   try {
     const response = await axios.post(url, payload, { headers, httpsAgent });
     return response.data;
   } catch (error) {
     console.error('Error during login:', error.message);
-    if (error.response) {
-      console.error('Error details:', error.response.data);
-    }
+    if (error.response) console.error('Error details:', error.response.data);
     return null;
   }
 }
 
 async function createtrade(deviceId, wallet, macKey, bearerToken, nameassest, amount, proxy) {
   const httpsAgent = getProxyAgent(proxy);
-  const timestampSeconds = getTimestampSeconds(); 
-  const nonce = getMicrosecondTimestampFromEpoch(); 
+  const timestampSeconds = getTimestampSeconds();
+  const nonce = getMicrosecondTimestampFromEpoch();
   const randomStr = uuidv4();
 
   const queryParams = {
@@ -267,77 +255,48 @@ async function createtrade(deviceId, wallet, macKey, bearerToken, nameassest, am
     timestamp: timestampSeconds,
     random_str: randomStr,
     device_id: deviceId,
-    sdk_version: 'web_0.7.29',
     time_zone: 'Asia/Bangkok',
-    locale: 'vi',
-    project_uuid: '47fe67e3-5cf2-4be2-886b-1d4b4290595f',
-    project_client_key: 'cVbve788gN6Wna6IYA4MCU9SjN6wOyfEZtNVnbuu',
-    project_app_uuid: 'dddd3cb1-bf66-460b-91c2-7adb0373e21c',
+    locale: 'en',
+    project_uuid: PROJECT_CONFIG.uuid,
+    project_client_key: PROJECT_CONFIG.clientKey,
+    project_app_uuid: PROJECT_CONFIG.appUuid,
   };
 
   const payload = {
-    deviceId: deviceId,
+    deviceId,
     id: nonce,
-    jsonrpc: "2.0",
-    method: "universal_createTransaction",
+    jsonrpc: '2.0',
+    method: 'universal_createTransaction',
     params: [
+      { name: 'UNIVERSAL', ownerAddress: wallet.address, version: '1.0.3' },
       {
-        name: "UNIVERSAL",
-        ownerAddress: wallet.address,
-        version: "1.0.3",
-      },
-      {
-        amount: amount,
+        amount,
         assetId: nameassest,
         chainId: 10,
-        options: {
-          solanaMEVTipAmount: "",
-          universalGas: false
-        },
+        options: { solanaMEVTipAmount: '', universalGas: false },
         tag: 'sell',
-        usePrimaryTokens: ["usdc", "usdt", "sol", "eth", "btc", "bnb"],
-      }
+        usePrimaryTokens: ['usdc', 'usdt', 'sol', 'eth', 'btc', 'bnb'],
+      },
     ],
-    token: bearerToken   
+    token: bearerToken,
   };
 
   queryParams.mac = createMAC(queryParams, payload, macKey);
 
   const queryString = new URLSearchParams(queryParams).toString();
-  const url = `https://universal-rpc.particle.network/?${queryString}`;
+  const url = `${UNIVERSALX_RPC_BASE}/?${queryString}`;
 
-  const headers = {
-    Accept: 'application/json, text/plain, */*',
-    'Content-Type': 'application/json',
-    Authorization: `Bearer ${bearerToken}`,
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36',
-    Origin: 'https://universalx.app',
-    Referer: 'https://universalx.app/',
-    'Accept-Encoding': 'gzip, deflate, br, zstd',
-    'Accept-Language': 'en-US,en;q=0.9,vi;q=0.8',
-    'Cache-Control': 'no-cache',
-    Pragma: 'no-cache',
-    Priority: 'u=1, i',
-    'Sec-Ch-Ua': '"Google Chrome";v="135", "Not-A.Brand";v="8", "Chromium";v="135"',
-    'Sec-Ch-Ua-Mobile': '?0',
-    'Sec-Ch-Ua-Platform': '"Windows"',
-    'Sec-Fetch-Dest': 'empty',
-    'Sec-Fetch-Mode': 'cors',
-    'Sec-Fetch-Site': 'cross-site',
-  };
+  const headers = getCommonHeaders({ Authorization: `Bearer ${bearerToken}` });
 
   try {
-    const response = await axios.post(url, payload, { headers, httpsAgent }); 
-    console.log(response.data);
+    const response = await axios.post(url, payload, { headers, httpsAgent });
     const userOps = response.data.result.feeQuotes[0].userOps;
     const userOpHashes = userOps.map(op => op.userOpHash);
     console.log(userOpHashes);
     return response.data;
   } catch (error) {
     console.error('Error calling create trade API:', error.message);
-    if (error.response) {
-      console.error('Error details:', error.response.data);
-    }
+    if (error.response) console.error('Error details:', error.response.data);
     return null;
   }
 }
@@ -345,7 +304,7 @@ async function createtrade(deviceId, wallet, macKey, bearerToken, nameassest, am
 async function getassest(deviceId, loginResult, proxy) {
   const httpsAgent = getProxyAgent(proxy);
   const { macKey, token } = loginResult;
-  const timestampSeconds = getTimestampSeconds(); 
+  const timestampSeconds = getTimestampSeconds();
   const randomStr = uuidv4();
 
   const queryParams = {
@@ -354,57 +313,29 @@ async function getassest(deviceId, loginResult, proxy) {
     timestamp: timestampSeconds,
     random_str: randomStr,
     device_id: deviceId,
-    sdk_version: 'web_0.7.33',
     time_zone: 'Asia/Bangkok',
-    locale: 'vi',
-    project_uuid: '47fe67e3-5cf2-4be2-886b-1d4b4290595f',
-    project_client_key: 'cVbve788gN6Wna6IYA4MCU9SjN6wOyfEZtNVnbuu',
-    project_app_uuid: 'dddd3cb1-bf66-460b-91c2-7adb0373e21c',
+    locale: 'en',
+    project_uuid: PROJECT_CONFIG.uuid,
+    project_client_key: PROJECT_CONFIG.clientKey,
+    project_app_uuid: PROJECT_CONFIG.appUuid,
   };
 
   const payload = [];
-
   queryParams.mac = createMAC(queryParams, payload, macKey);
 
   const queryString = new URLSearchParams(queryParams).toString();
-  const url = `https://universal-app-api.particle.network/assets/v2?${queryString}`;
+  const url = `${UNIVERSALX_API_BASE}/assets/v2?${queryString}`;
 
-  const headers = {
-    Accept: 'application/json, text/plain, */*',
-    'Content-Type': 'application/json',
-    Authorization: `Bearer ${token}`,
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36',
-    Origin: 'https://universalx.app',
-    Referer: 'https://universalx.app/',
-    'Accept-Encoding': 'gzip, deflate, br, zstd',
-    'Accept-Language': 'en-US,en;q=0.9,vi;q=0.8',
-    'Cache-Control': 'no-cache',
-    Pragma: 'no-cache',
-    Priority: 'u=1, i',
-    'Sec-Ch-Ua': '"Google Chrome";v="135", "Not-A.Brand";v="8", "Chromium";v="135"',
-    'Sec-Ch-Ua-Mobile': '?0',
-    'Sec-Ch-Ua-Platform': '"Windows"',
-    'Sec-Fetch-Dest': 'empty',
-    'Sec-Fetch-Mode': 'cors',
-    'Sec-Fetch-Site': 'cross-site',
-  };
+  const headers = getCommonHeaders({ Authorization: `Bearer ${token}` });
 
   try {
     const response = await axios.get(url, { headers, httpsAgent });
     return response.data.tokens
-      .filter(token => {
-        const symbol = token.token?.symbol?.toUpperCase();
-        return symbol === 'USDT' || symbol === 'USDC';
-      })
-      .map(token => ({
-        symbol: token.token.symbol,
-        amount: token.amount 
-      }));
+      .filter(t => ['USDT', 'USDC'].includes(t.token?.symbol?.toUpperCase()))
+      .map(t => ({ symbol: t.token.symbol, amount: t.amount }));
   } catch (error) {
     console.error('Error fetching assets:', error.message);
-    if (error.response) {
-      console.error('Error details:', error.response.data);
-    }
+    if (error.response) console.error('Error details:', error.response.data);
     return null;
   }
 }
@@ -412,8 +343,8 @@ async function getassest(deviceId, loginResult, proxy) {
 async function gettradevolume(deviceId, loginResult, proxy) {
   const httpsAgent = getProxyAgent(proxy);
   const { aaAddress, solanaAAAddress, macKey, token } = loginResult;
-  const timestampSeconds = getTimestampSeconds(); 
-  const nonce = getMicrosecondTimestampFromEpoch(); 
+  const timestampSeconds = getTimestampSeconds();
+  const nonce = getMicrosecondTimestampFromEpoch();
   const randomStr = uuidv4();
 
   const queryParams = {
@@ -422,50 +353,28 @@ async function gettradevolume(deviceId, loginResult, proxy) {
     timestamp: timestampSeconds,
     random_str: randomStr,
     device_id: deviceId,
-    sdk_version: 'web_0.7.33',
     time_zone: 'Asia/Bangkok',
-    locale: 'vi',
-    project_uuid: '47fe67e3-5cf2-4be2-886b-1d4b4290595f',
-    project_client_key: 'cVbve788gN6Wna6IYA4MCU9SjN6wOyfEZtNVnbuu',
-    project_app_uuid: 'dddd3cb1-bf66-460b-91c2-7adb0373e21c',
+    locale: 'en',
+    project_uuid: PROJECT_CONFIG.uuid,
+    project_client_key: PROJECT_CONFIG.clientKey,
+    project_app_uuid: PROJECT_CONFIG.appUuid,
   };
 
   const payload = {
-    deviceId: deviceId,
+    deviceId,
     id: nonce,
-    jsonrpc: "2.0",
-    method: "universal_getTransactionsV2",
-    params: [
-      { sender: aaAddress, solanaSender: solanaAAAddress },
-      { limit: 20, page: 1 }
-    ],
-    token: token   
+    jsonrpc: '2.0',
+    method: 'universal_getTransactionsV2',
+    params: [{ sender: aaAddress, solanaSender: solanaAAAddress }, { limit: 20, page: 1 }],
+    token,
   };
 
   queryParams.mac = createMAC(queryParams, payload, macKey);
 
   const queryString = new URLSearchParams(queryParams).toString();
-  const url = `https://universal-rpc.particle.network/?${queryString}`;
+  const url = `${UNIVERSALX_RPC_BASE}/?${queryString}`;
 
-  const headers = {
-    Accept: 'application/json, text/plain, */*',
-    'Content-Type': 'application/json',
-    Authorization: `Bearer ${token}`,
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36',
-    Origin: 'https://universalx.app',
-    Referer: 'https://universalx.app/',
-    'Accept-Encoding': 'gzip, deflate, br, zstd',
-    'Accept-Language': 'en-US,en;q=0.9,vi;q=0.8',
-    'Cache-Control': 'no-cache',
-    Pragma: 'no-cache',
-    Priority: 'u=1, i',
-    'Sec-Ch-Ua': '"Google Chrome";v="135", "Not-A.Brand";v="8", "Chromium";v="135"',
-    'Sec-Ch-Ua-Mobile': '?0',
-    'Sec-Ch-Ua-Platform': '"Windows"',
-    'Sec-Fetch-Dest': 'empty',
-    'Sec-Fetch-Mode': 'cors',
-    'Sec-Fetch-Site': 'cross-site',
-  };
+  const headers = getCommonHeaders({ Authorization: `Bearer ${token}` });
 
   try {
     const response = await axios.post(url, payload, { headers, httpsAgent });
@@ -473,22 +382,18 @@ async function gettradevolume(deviceId, loginResult, proxy) {
 
     const filteredTxs = transactions.filter(tx => {
       const tag = tx.tag?.toLowerCase();
-      return tag === "buy" || tag === "sell";
+      return tag === 'buy' || tag === 'sell';
     });
 
-    const totalVolume = filteredTxs.reduce((sum, tx) => {
+    return filteredTxs.reduce((sum, tx) => {
       const amountStr = tx.change?.amountInUSD || '0';
-      const cleaned = amountStr.replace('+', '').replace('-', ''); 
+      const cleaned = amountStr.replace('+', '').replace('-', '');
       const amount = parseFloat(cleaned);
       return sum + (isNaN(amount) ? 0 : amount);
     }, 0);
-
-    return totalVolume;
   } catch (error) {
     console.error('Error fetching trade volume:', error.message);
-    if (error.response) {
-      console.error('Error details:', error.response.data);
-    }
+    if (error.response) console.error('Error details:', error.response.data);
     return null;
   }
 }
@@ -504,23 +409,20 @@ async function waitForUsdcOnly(deviceId, loginResult, proxy) {
     const usdcAmount = BigInt(usdc?.amount || '0x00');
 
     if (usdtAmount === 0n && usdcAmount > 0n) {
-      return {
-        symbol: 'usdc',
-        amount: usdc.amount, 
-      };
+      return { symbol: 'usdc', amount: usdc.amount };
     }
 
-    await new Promise(resolve => setTimeout(resolve, 10000));
+    await delay(10000);
   }
 }
 
 async function createwithdraw(deviceId, wallet, result, loginResult, proxy) {
   const httpsAgent = getProxyAgent(proxy);
-  const {symbol, amount} = result;
-  const {macKey, token} = loginResult;
- 
-  const timestampSeconds = getTimestampSeconds(); 
-  const nonce = getMicrosecondTimestampFromEpoch(); 
+  const { symbol, amount } = result;
+  const { macKey, token } = loginResult;
+
+  const timestampSeconds = getTimestampSeconds();
+  const nonce = getMicrosecondTimestampFromEpoch();
   const randomStr = uuidv4();
 
   const queryParams = {
@@ -529,94 +431,76 @@ async function createwithdraw(deviceId, wallet, result, loginResult, proxy) {
     timestamp: timestampSeconds,
     random_str: randomStr,
     device_id: deviceId,
-    sdk_version: 'web_0.7.29',
     time_zone: 'Asia/Bangkok',
-    locale: 'vi',
-    project_uuid: '47fe67e3-5cf2-4be2-886b-1d4b4290595f',
-    project_client_key: 'cVbve788gN6Wna6IYA4MCU9SjN6wOyfEZtNVnbuu',
-    project_app_uuid: 'dddd3cb1-bf66-460b-91c2-7adb0373e21c',
+    locale: 'en',
+    project_uuid: PROJECT_CONFIG.uuid,
+    project_client_key: PROJECT_CONFIG.clientKey,
+    project_app_uuid: PROJECT_CONFIG.appUuid,
   };
 
   const payload = {
-    deviceId: deviceId,
+    deviceId,
     id: nonce,
-    jsonrpc: "2.0",
-    method: "universal_createTransaction",
+    jsonrpc: '2.0',
+    method: 'universal_createTransaction',
     params: [
+      { name: 'UNIVERSAL', ownerAddress: wallet.address, version: '1.0.3' },
       {
-        name: "UNIVERSAL",
-        ownerAddress: wallet.address,
-        version: "1.0.3",
-      },
-      {
-        assetTokens: [{assetId: symbol, amount: amount}],
+        assetTokens: [{ assetId: symbol, amount }],
         chainId: 10,
         receiver: walletsenderaddress,
         tag: 'transfer_v2',
-        usePrimaryTokens: ["usdc", "usdt", "sol", "eth", "btc", "bnb"],
-      }
+        usePrimaryTokens: ['usdc', 'usdt', 'sol', 'eth', 'btc', 'bnb'],
+      },
     ],
-    token: token   
+    token,
   };
 
   queryParams.mac = createMAC(queryParams, payload, macKey);
 
   const queryString = new URLSearchParams(queryParams).toString();
-  const url = `https://universal-rpc.particle.network/?${queryString}`;
+  const url = `${UNIVERSALX_RPC_BASE}/?${queryString}`;
 
-  const headers = {
-    Accept: 'application/json, text/plain, */*',
-    'Content-Type': 'application/json',
-    Authorization: `Bearer ${token}`,
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36',
-    Origin: 'https://universalx.app',
-    Referer: 'https://universalx.app/',
-    'Accept-Encoding': 'gzip, deflate, br, zstd',
-    'Accept-Language': 'en-US,en;q=0.9,vi;q=0.8',
-    'Cache-Control': 'no-cache',
-    Pragma: 'no-cache',
-    Priority: 'u=1, i',
-    'Sec-Ch-Ua': '"Google Chrome";v="135", "Not-A.Brand";v="8", "Chromium";v="135"',
-    'Sec-Ch-Ua-Mobile': '?0',
-    'Sec-Ch-Ua-Platform': '"Windows"',
-    'Sec-Fetch-Dest': 'empty',
-    'Sec-Fetch-Mode': 'cors',
-    'Sec-Fetch-Site': 'cross-site',
-  };
+  const headers = getCommonHeaders({ Authorization: `Bearer ${token}` });
 
   try {
     const response = await axios.post(url, payload, { headers, httpsAgent });
-    console.log(response.data);
     const userOps = response.data.result.feeQuotes[0].userOps;
     const userOpHashes = userOps.map(op => op.userOpHash);
     console.log(userOpHashes);
     return response.data;
   } catch (error) {
     console.error('Error creating withdraw transaction:', error.message);
-    if (error.response) {
-      console.error('Error details:', error.response.data);
-    }
+    if (error.response) console.error('Error details:', error.response.data);
     return null;
   }
 }
 
-async function autoTradeUntilVolumeReached(deviceId, wallet, loginResult, proxy) {
+/**
+ * Submit a signed UserOperation produced by createtrade/createwithdraw.
+ * Internal implementation omitted — see disclaimer above.
+ */
+async function sendTransaction() {
+  throw new Error('Transaction submission helper not included in public version');
+}
+
+async function autoTradeUntilVolumeReached(deviceId, wallet, loginResult, proxy, volumeTarget = 10) {
   while (true) {
     const { macKey, token } = loginResult;
     const tradeVolume = await gettradevolume(deviceId, loginResult, proxy);
     console.log('Current Trade Volume:', tradeVolume);
 
-    if (tradeVolume >= 10) {
-      console.log("Trade volume has reached the target, exiting loop.");
+    if (tradeVolume >= volumeTarget) {
+      console.log('Trade volume has reached the target, exiting loop.');
       break;
     }
 
-    const assest = await getassest(deviceId, loginResult, proxy);
+    const assets = await getassest(deviceId, loginResult, proxy);
 
     let maxAsset = null;
-    let maxAmount = BigInt(0);
+    let maxAmount = 0n;
 
-    for (const asset of assest) {
+    for (const asset of assets) {
       const amount = BigInt(asset.amount);
       if (amount > maxAmount) {
         maxAmount = amount;
@@ -637,39 +521,36 @@ async function autoTradeUntilVolumeReached(deviceId, wallet, loginResult, proxy)
       } catch (error) {
         console.error('Error creating or sending transaction:', error.message || error);
         console.log('Waiting 10 seconds before retrying with new asset...');
-        await new Promise(resolve => setTimeout(resolve, 10000));
-        continue; 
+        await delay(10000);
+        continue;
       }
     } else {
       console.log('No valid assets found, waiting 10 seconds...');
     }
 
-    await new Promise(resolve => setTimeout(resolve, 15000));
+    await delay(15000);
   }
 }
 
 async function withdraw(deviceId, wallet, loginResult, proxy) {
-  const {macKey, token} = loginResult;
+  const { macKey, token } = loginResult;
 
   try {
     const result = await waitForUsdcOnly(deviceId, loginResult, proxy);
     const withdrawstatus = await createwithdraw(deviceId, wallet, result, loginResult, proxy);
-    console.log("Withdraw transaction created:", withdrawstatus);
+    console.log('Withdraw transaction created:', withdrawstatus);
     await sendTransaction(deviceId, wallet, macKey, token, withdrawstatus, proxy);
   } catch (error) {
     console.error('Error during withdrawal process:', error.message);
-    if (error.response) {
-      console.error('Error details:', error.response.data);
-    }
+    if (error.response) console.error('Error details:', error.response.data);
   }
 }
 
-async function processWallet(privateKey) {
+async function processWallet(privateKey, proxy) {
   const deviceId = uuidv4();
   const wallet = new ethers.Wallet(privateKey);
 
   let loginResult = null;
-
   while (!loginResult) {
     loginResult = await login(deviceId, privateKey, proxy);
     if (!loginResult) {
@@ -682,9 +563,7 @@ async function processWallet(privateKey) {
   console.log('Assets:', assets);
 
   await autoTradeUntilVolumeReached(deviceId, wallet, loginResult, proxy);
-
   await delay(5000);
-
   await withdraw(deviceId, wallet, loginResult, proxy);
 
   console.log('✅ Workflow completed successfully');
@@ -692,12 +571,12 @@ async function processWallet(privateKey) {
 
 async function main() {
   const privateKey = process.env.PRIVATE_KEY;
-
   if (!privateKey) {
     throw new Error('PRIVATE_KEY environment variable is missing');
   }
 
-  await processWallet(privateKey);
+  const proxy = { /* your proxy object */ };
+  await processWallet(privateKey, proxy);
 }
 
 main().catch(console.error);
